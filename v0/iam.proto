@@ -1,0 +1,57 @@
+syntax = "proto3";
+package iam;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+
+service IAM {
+  rpc CreateUser(CreateUserRequest) returns (User) {
+    option (google.api.http) = {
+      post: "/v0/users"
+      body: "user"
+    };
+  }
+
+  rpc CreateIdentity(CreateIdentityRequest) returns (Identity) {
+    option (google.api.http) = {
+      post: "/v0/{parent=users/*}/identities"
+      body: "identity"
+    };
+  }
+}
+
+message CreateUserRequest {
+  User user = 1;
+}
+
+message CreateIdentityRequest {
+  string parent = 1;
+  Identity identity = 2;
+}
+
+message User {
+  string name = 1;
+  google.protobuf.Timestamp create_time = 2;
+  google.protobuf.Timestamp update_time = 3;
+  google.protobuf.Timestamp delete_time = 4;
+
+  bool is_root = 5;
+  string display_name = 6;
+}
+
+message Identity {
+  enum AuthMethod {
+    AUTH_METHOD_UNSPECIFIED = 0;
+    AUTH_METHOD_PASSWORD = 1;
+  }
+
+  string name = 1;
+  google.protobuf.Timestamp create_time = 2;
+  google.protobuf.Timestamp update_time = 3;
+  google.protobuf.Timestamp delete_time = 4;
+
+  AuthMethod auth_method = 5;
+  oneof auth_details {
+    string password = 6;
+  }
+}
