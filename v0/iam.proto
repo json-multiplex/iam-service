@@ -3,12 +3,84 @@ package iam;
 
 import "google/api/annotations.proto";
 import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/field_mask.proto";
 
 service IAM {
+  rpc Authenticate(AuthenticateRequest) returns (AuthenticateResponse) {
+    option (google.api.http) = {
+      post: "/v0/authenticate"
+      body: "*"
+    };
+  }
+
+  rpc GetAccount(GetAccountRequest) returns (Account) {
+    option (google.api.http) = {
+      get: "/v0/{name=accounts/*}"
+    };
+  }
+
+  rpc CreateAccount(CreateAccountRequest) returns (Account) {
+    option (google.api.http) = {
+      post: "/v0/accounts"
+      body: "*"
+    };
+  }
+
+  rpc UpdateAccount(UpdateAccountRequest) returns (Account) {
+    option (google.api.http) = {
+      patch: "/v0/{account.name=accounts/*}"
+      body: "account"
+    };
+  }
+
+  rpc DeleteAccount(DeleteAccountRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = {
+      delete: "/v0/{name=accounts/*}"
+    };
+  }
+
+  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse) {
+    option (google.api.http) = {
+      get: "/v0/users"
+    };
+  }
+
+  rpc GetUser(GetUserRequest) returns (User) {
+    option (google.api.http) = {
+      get: "/v0/{name=users/*}"
+    };
+  }
+
   rpc CreateUser(CreateUserRequest) returns (User) {
     option (google.api.http) = {
       post: "/v0/users"
       body: "user"
+    };
+  }
+
+  rpc UpdateUser(UpdateUserRequest) returns (User) {
+    option (google.api.http) = {
+      patch: "/v0/{user.name=users/*}"
+      body: "user"
+    };
+  }
+
+  rpc DeleteUser(DeleteUserRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = {
+      delete: "/v0/{name=users/*}"
+    };
+  }
+
+  rpc ListIdentities(ListIdentitiesRequest) returns (ListIdentitiesResponse) {
+    option (google.api.http) = {
+      get: "/v0/{parent=users/*}/identities"
+    };
+  }
+
+  rpc GetIdentity(GetIdentityRequest) returns (Identity) {
+    option (google.api.http) = {
+      get: "/v0/{name=users/*/identities/*}"
     };
   }
 
@@ -18,15 +90,29 @@ service IAM {
       body: "identity"
     };
   }
+
+  rpc UpdateIdentity(UpdateIdentityRequest) returns (Identity) {
+    option (google.api.http) = {
+      patch: "/v0/{identity.name=users/*/identities/*}"
+      body: "identity"
+    };
+  }
+
+  rpc DeleteIdentity(DeleteIdentityRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = {
+      delete: "/v0/{name=users/*/identities/*}"
+    };
+  }
 }
 
-message CreateUserRequest {
-  User user = 1;
-}
+message Account {
+  string name = 1;
+  google.protobuf.Timestamp create_time = 2;
+  google.protobuf.Timestamp update_time = 3;
+  google.protobuf.Timestamp delete_time = 4;
 
-message CreateIdentityRequest {
-  string parent = 1;
-  Identity identity = 2;
+  string display_name = 5;
+  string root = 6;
 }
 
 message User {
@@ -54,4 +140,89 @@ message Identity {
   oneof auth_details {
     string password = 6;
   }
+}
+
+message AuthenticateRequest {
+  string account = 1;
+  string user = 2;
+  string password = 3;
+}
+
+message AuthenticateResponse {
+  string token = 1;
+}
+
+message GetAccountRequest {
+  string name = 1;
+}
+
+message CreateAccountRequest {
+  Account account = 1;
+  User root = 2;
+  string root_password = 3;
+}
+
+message UpdateAccountRequest {
+  Account account = 1;
+  google.protobuf.FieldMask update_mask = 2;
+}
+
+message DeleteAccountRequest {
+  string name = 1;
+}
+
+message ListUsersRequest {
+  int32 page_size = 1;
+  string page_token = 2;
+}
+
+message ListUsersResponse {
+  repeated User users = 1;
+  string next_page_token = 2;
+}
+
+message GetUserRequest {
+  string name = 1;
+}
+
+message CreateUserRequest {
+  User user = 1;
+}
+
+message UpdateUserRequest {
+  User user = 1;
+  google.protobuf.FieldMask update_mask = 2;
+}
+
+message DeleteUserRequest {
+  string name = 1;
+}
+
+message ListIdentitiesRequest {
+  string parent = 1;
+  int32 page_size = 2;
+  string page_token = 3;
+}
+
+message ListIdentitiesResponse {
+  repeated Identity identities = 1;
+  string next_page_token = 2;
+}
+
+message GetIdentityRequest {
+  string name = 1;
+}
+
+message CreateIdentityRequest {
+  string parent = 1;
+  Identity identity = 2;
+}
+
+message UpdateIdentityRequest {
+  Identity identity = 1;
+  google.protobuf.FieldMask update_mask = 2;
+}
+
+message DeleteIdentityRequest {
+  string name = 1;
 }

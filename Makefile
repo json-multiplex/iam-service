@@ -1,5 +1,5 @@
 bin/iam: $(shell find cmd internal generated/v0 -type f)
-	go build -o bin/iam cmd/iam/main.go
+	go build -o bin/iam cmd/iam/*.go
 
 generated/v0/iam.pb.go: $(shell find v0 -type f)
 	protoc \

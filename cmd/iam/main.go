@@ -2,185 +2,51 @@ package main
 
 import (
 	"context"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"log"
 	"net"
 	"net/http"
-
-	"github.com/golang/protobuf/ptypes"
-	"github.com/pkg/errors"
-
-	"github.com/json-multiplex/iam-service/internal/service"
-
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/metadata"
-	"google.golang.org/grpc/reflection"
+	"os"
+	"time"
 
 	"github.com/grpc-ecosystem/grpc-gateway/runtime"
+	"github.com/jmoiron/sqlx"
+	_ "github.com/lib/pq"
+	"github.com/namsral/flag"
+	"github.com/pkg/errors"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
+
 	pb "github.com/json-multiplex/iam-service/generated/v0"
+	"github.com/json-multiplex/iam-service/internal/service"
+	"github.com/json-multiplex/iam-service/internal/store"
 )
-
-type server struct {
-	Service service.Service
-}
-
-func serializeUser(u service.User) (*pb.User, error) {
-	createTime, err := ptypes.TimestampProto(u.CreateTime)
-	if err != nil {
-		return nil, err
-	}
-
-	updateTime, err := ptypes.TimestampProto(u.UpdateTime)
-	if err != nil {
-		return nil, err
-	}
-
-	deleteTime, err := ptypes.TimestampProto(u.DeleteTime)
-	if err != nil {
-		return nil, err
-	}
-
-	return &pb.User{
-		Name:        u.Name,
-		CreateTime:  createTime,
-		UpdateTime:  updateTime,
-		DeleteTime:  deleteTime,
-		IsRoot:      u.IsRoot,
-		DisplayName: u.DisplayName,
-	}, nil
-}
-
-func deserializeIdentity(u *pb.Identity) (service.Identity, error) {
-	identity := service.Identity{
-		Name: u.Name,
-	}
-
-	switch u.AuthMethod {
-	case pb.Identity_AUTH_METHOD_UNSPECIFIED:
-		return service.Identity{}, errors.New("auth_method is required")
-	case pb.Identity_AUTH_METHOD_PASSWORD:
-		identity.AuthMethod = service.AuthMethodPassword
-		identity.Password = u.GetPassword()
-	}
-
-	return identity, nil
-}
-
-func serializeIdentity(i service.Identity) (*pb.Identity, error) {
-	createTime, err := ptypes.TimestampProto(i.CreateTime)
-	if err != nil {
-		return nil, err
-	}
-
-	updateTime, err := ptypes.TimestampProto(i.UpdateTime)
-	if err != nil {
-		return nil, err
-	}
-
-	deleteTime, err := ptypes.TimestampProto(i.DeleteTime)
-	if err != nil {
-		return nil, err
-	}
-
-	identity := &pb.Identity{
-		Name:       i.Name,
-		CreateTime: createTime,
-		UpdateTime: updateTime,
-		DeleteTime: deleteTime,
-	}
-
-	switch i.AuthMethod {
-	case service.AuthMethodPassword:
-		identity.AuthMethod = pb.Identity_AUTH_METHOD_PASSWORD
-		identity.AuthDetails = &pb.Identity_Password{
-			Password: i.Password,
-		}
-	}
-
-	return identity, nil
-}
-
-func deserializeUser(u *pb.User) service.User {
-	return service.User{
-		Name:        u.Name,
-		IsRoot:      u.IsRoot,
-		DisplayName: u.DisplayName,
-	}
-}
-
-func (s *server) CreateUser(ctx context.Context, req *pb.CreateUserRequest) (*pb.User, error) {
-	var token string
-	if mdata, ok := metadata.FromIncomingContext(ctx); ok {
-		if auth, ok := mdata["authorization"]; ok {
-			if len(auth) > 0 {
-				token = auth[0]
-			}
-		}
-	}
-
-	inUser := deserializeUser(req.User)
-
-	resultUser, err := s.Service.CreateUser(ctx, service.CreateUserRequest{
-		Token: token,
-		User:  inUser,
-	})
-
-	if err != nil {
-		return nil, errors.Wrap(err, "error creating user")
-	}
-
-	outUser, err := serializeUser(resultUser)
-	if err != nil {
-		return nil, errors.Wrap(err, "error serializing user")
-	}
-
-	return outUser, nil
-}
-
-func (s *server) CreateIdentity(ctx context.Context, req *pb.CreateIdentityRequest) (*pb.Identity, error) {
-	var token string
-	if mdata, ok := metadata.FromIncomingContext(ctx); ok {
-		if auth, ok := mdata["authorization"]; ok {
-			if len(auth) > 0 {
-				token = auth[0]
-			}
-		}
-	}
-
-	inIdentity, err := deserializeIdentity(req.Identity)
-	if err != nil {
-		return nil, errors.Wrap(err, "error deserializing identity")
-	}
-
-	resultIdentity, err := s.Service.CreateIdentity(ctx, service.CreateIdentityRequest{
-		Token:    token,
-		Identity: inIdentity,
-		Parent:   req.Parent,
-	})
-
-	if err != nil {
-		return nil, errors.Wrap(err, "error creating identity")
-	}
-
-	outIdentity, err := serializeIdentity(resultIdentity)
-	if err != nil {
-		return nil, errors.Wrap(err, "error serializing identity")
-	}
-
-	return outIdentity, nil
-}
 
 func main() {
 	ctx := context.Background()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	if err := run(ctx); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run(ctx context.Context) error {
+	srv, err := newServer()
+	if err != nil {
+		return err
+	}
+
 	grpcServer := grpc.NewServer()
-	pb.RegisterIAMServer(grpcServer, &server{})
+	pb.RegisterIAMServer(grpcServer, &srv)
 	reflection.Register(grpcServer)
 
 	l, err := net.Listen("tcp", ":3000")
 	if err != nil {
-		log.Fatalf("failed to listen and serve grpc: %v", err)
+		return errors.Wrap(err, "failed to listen and serve grpc")
 	}
 
 	go grpcServer.Serve(l)
@@ -189,7 +55,59 @@ func main() {
 	opts := []grpc.DialOption{grpc.WithInsecure()}
 	pb.RegisterIAMHandlerFromEndpoint(ctx, mux, ":3000", opts)
 
-	if err := http.ListenAndServe(":4000", mux); err != nil {
-		log.Fatalf("failed to listen and serve http: %v", err)
+	return http.ListenAndServe(":4000", mux)
+}
+
+func newServer() (server, error) {
+	fs := flag.NewFlagSetWithEnvPrefix(os.Args[0], "IAM", 0)
+
+	var dbAddr string
+	fs.StringVar(&dbAddr, "db_addr", "", "db connection string")
+
+	var tokenSignKeyPEM string
+	fs.StringVar(&tokenSignKeyPEM, "token_sign_key", "", "PEM-encoded key for signing tokens")
+
+	var tokenVerifyKeyPEM string
+	fs.StringVar(&tokenVerifyKeyPEM, "token_verify_key", "", "PEM-encoded key for verifying tokens")
+
+	fs.Parse(os.Args[1:])
+
+	db, err := sqlx.Open("postgres", dbAddr)
+	if err != nil {
+		return server{}, errors.Wrap(err, "failed to open database connection")
 	}
+
+	var tokenSignKey *rsa.PrivateKey
+	var tokenVerifyKey *rsa.PublicKey
+
+	if block, _ := pem.Decode([]byte(tokenSignKeyPEM)); block != nil {
+		tokenSignKey, err = x509.ParsePKCS1PrivateKey(block.Bytes)
+		if err != nil {
+			return server{}, errors.Wrap(err, "error parsing token sign key")
+		}
+	}
+
+	if block, _ := pem.Decode([]byte(tokenVerifyKeyPEM)); block != nil {
+		key, err := x509.ParsePKIXPublicKey(block.Bytes)
+		if err != nil {
+			return server{}, errors.Wrap(err, "error parsing token verify key")
+		}
+
+		var ok bool
+		tokenVerifyKey, ok = key.(*rsa.PublicKey)
+		if !ok {
+			return server{}, errors.New("verify key must be RSA")
+		}
+	}
+
+	return server{
+		Service: service.Service{
+			Store: &store.DBStore{
+				DB: db,
+			},
+			TokenSignKey:          tokenSignKey,
+			TokenVerifyKey:        tokenVerifyKey,
+			TokenExpirationPeriod: 24 * time.Hour,
+		},
+	}, nil
 }
